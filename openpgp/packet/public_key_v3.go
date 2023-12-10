@@ -334,7 +334,7 @@ func (pk *PublicKeyV3) VerifyUserIdSignatureV3(id string, pub *PublicKeyV3, sig 
 
 // VerifyKeyHashTagV3 returns nil iff sig appears to be a plausible signature over this _v4_
 // primary key and subkey, based solely on its HashTag.
-func (pk *PublicKey) VerifyKeyHashTagV3(signed *PublicKeyV3, sig *SignatureV3) error {
+func (pk *PublicKey) VerifyKeyHashTagV3(signed *PublicKey, sig *SignatureV3) error {
 	h, err := keySignatureHash(pk, signed, sig.Hash)
 	if err != nil {
 		return err
