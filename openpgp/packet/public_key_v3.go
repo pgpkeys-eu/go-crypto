@@ -292,6 +292,16 @@ func (pk *PublicKeyV3) VerifySignatureV3(signed hash.Hash, sig *SignatureV3) (er
 	}
 }
 
+// VerifyUserIdHashTagV3 returns nil iff sig appears to be a plausible signature over this _v4_
+// primary key and id, based solely on its HashTag.
+func (pk *PublicKey) VerifyUserIdHashTagV3(id string, sig *SignatureV3) (err error) {
+	h, err := userIdSignatureV3Hash(id, pk, sig.Hash)
+	if err != nil {
+		return err
+	}
+	return VerifyHashTagV3(h, sig)
+}
+
 // VerifyUserIdHashTagV3 returns nil iff sig appears to be a plausible signature over this
 // primary key and id, based solely on its HashTag.
 func (pk *PublicKeyV3) VerifyUserIdHashTagV3(id string, sig *SignatureV3) (err error) {
@@ -320,6 +330,16 @@ func (pk *PublicKeyV3) VerifyUserIdSignatureV3(id string, pub *PublicKeyV3, sig 
 		return err
 	}
 	return pk.VerifySignatureV3(h, sig)
+}
+
+// VerifyKeyHashTagV3 returns nil iff sig appears to be a plausible signature over this _v4_
+// primary key and subkey, based solely on its HashTag.
+func (pk *PublicKey) VerifyKeyHashTagV3(signed *PublicKeyV3, sig *SignatureV3) error {
+	h, err := keySignatureHash(pk, signed, sig.Hash)
+	if err != nil {
+		return err
+	}
+	return VerifyHashTagV3(h, sig)
 }
 
 // VerifyKeyHashTagV3 returns nil iff sig appears to be a plausible signature over this
@@ -354,6 +374,16 @@ func (pk *PublicKeyV3) VerifyKeySignatureV3(signed *PublicKeyV3, sig *SignatureV
 		return err
 	}
 	return pk.VerifySignatureV3(h, sig)
+}
+
+// VerifyRevocationHashTagV3 returns nil iff sig appears to be a plausible signature over this _v4_
+// key, based solely on its HashTag.
+func (pk *PublicKey) VerifyRevocationHashTagV3(sig *SignatureV3) (err error) {
+	h, err := keyRevocationHash(pk, sig.Hash)
+	if err != nil {
+		return err
+	}
+	return VerifyHashTagV3(h, sig)
 }
 
 // VerifyRevocationHashTagV3 returns nil iff sig appears to be a plausible signature over this
