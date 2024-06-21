@@ -909,16 +909,6 @@ func (pk *PublicKey) VerifyRevocationHashTag(sig *Signature) (err error) {
 	return VerifyHashTag(h, sig)
 }
 
-// VerifyRevocationHashTag returns nil iff sig appears to be a plausible signature
-// over this public key, based solely on its HashTag.
-func (pk *PublicKey) VerifyRevocationHashTag(sig *Signature) (err error) {
-	h, err := keyRevocationHash(pk, sig.Hash)
-	if err != nil {
-		return err
-	}
-	return VerifyHashTag(h, sig)
-}
-
 // VerifyRevocationSignature returns nil iff sig is a valid signature, made by this
 // public key.
 func (pk *PublicKey) VerifyRevocationSignature(sig *Signature) (err error) {
@@ -973,16 +963,6 @@ func userIdSignatureHash(id string, pk *PublicKey, h hash.Hash) (err error) {
 // directKeySignatureHash returns a Hash of the message that needs to be signed.
 func directKeySignatureHash(pk *PublicKey, h hash.Hash) (err error) {
 	return pk.SerializeForHash(h)
-}
-
-// VerifyUserIdHashTag returns nil iff sig appears to be a plausible signature over this
-// public key and UserId, based solely on its HashTag
-func (pk *PublicKey) VerifyUserIdHashTag(id string, sig *Signature) (err error) {
-	h, err := userIdSignatureHash(id, pk, sig.Hash)
-	if err != nil {
-		return err
-	}
-	return VerifyHashTag(h, sig)
 }
 
 // VerifyUserIdHashTag returns nil iff sig appears to be a plausible signature over this
