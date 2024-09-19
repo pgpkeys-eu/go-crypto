@@ -15,6 +15,7 @@ jobs:
         uses: ./.github/actions/build-gosop
         with: 
           binary-location: ./gosop-${{ github.sha }}-v1
+          branch-gosop: gosop-gopenpgp-v2
       # Upload as artifact
       - name: Upload gosop artifact
         uses: actions/upload-artifact@v3
@@ -51,6 +52,7 @@ jobs:
         uses: ./.github/actions/build-gosop
         with: 
           go-crypto-ref: main
+          branch-gosop: gosop-gopenpgp-v2
           binary-location: ./gosop-main-v1
       # Upload as artifact
       - name: Upload gosop-main artifact
@@ -83,7 +85,7 @@ jobs:
     name: Run interoperability test suite
     runs-on: ubuntu-latest
     container: 
-      image: ghcr.io/protonmail/openpgp-interop-test-docker:v.1.1.3
+      image: ghcr.io/protonmail/openpgp-interop-test-docker:v1.1.9
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.github_token }}

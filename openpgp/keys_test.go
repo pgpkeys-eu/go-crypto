@@ -966,6 +966,9 @@ func TestNewEntityPrivateSerialization(t *testing.T) {
 }
 
 func TestNotationPacket(t *testing.T) {
+	config := &packet.Config{
+		NonDeterministicSignaturesViaNotation: packet.BoolPointer(false),
+	}
 	keys, err := ReadArmoredKeyRing(bytes.NewBufferString(keyWithNotation))
 	if err != nil {
 		t.Fatal(err)
@@ -974,7 +977,7 @@ func TestNotationPacket(t *testing.T) {
 	assertNotationPackets(t, keys)
 
 	serializedEntity := bytes.NewBuffer(nil)
-	err = keys[0].SerializePrivate(serializedEntity, nil)
+	err = keys[0].SerializePrivate(serializedEntity, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1496,6 +1499,9 @@ func TestEncryptAndDecryptPrivateKeys(t *testing.T) {
 				S2KConfig: &s2k.Config{
 					S2KMode: mode,
 				},
+			}
+			if mode == s2k.Argon2S2K {
+				config.AEADConfig = &packet.AEADConfig{}
 			}
 			err = entity.EncryptPrivateKeys(passphrase, config)
 			if err != nil {
