@@ -490,6 +490,7 @@ func verifyDetachedSignature(keyring KeyRing, signed, signature io.Reader, expec
 	var sigType packet.SignatureType
 	var keys []Key
 	var p packet.Packet
+	var h hash.Hash
 
 	packets := packet.NewReader(signature)
 	for {
@@ -509,10 +510,18 @@ func verifyDetachedSignature(keyring KeyRing, signed, signature io.Reader, expec
 			issuerKeyId = *sig.IssuerKeyId
 			hashFunc = sig.Hash
 			sigType = sig.SigType
+			h, err = sig.PrepareVerify()
+			if err != nil {
+				return nil, nil, err
+			}
 		case *packet.SignatureV3:
 			issuerKeyId = sig.IssuerKeyId
 			hashFunc = sig.Hash
 			sigType = sig.SigType
+			h, err = sig.PrepareVerify()
+			if err != nil {
+				return nil, nil, err
+			}
 		default:
 			return nil, nil, errors.StructuralError("non signature packet found")
 		}
@@ -539,10 +548,6 @@ func verifyDetachedSignature(keyring KeyRing, signed, signature io.Reader, expec
 		panic("unreachable")
 	}
 
-	h, err := sig.PrepareVerify()
-	if err != nil {
-		return nil, nil, err
-	}
 	wrappedHash, err := wrapHashForSignature(h, sigType)
 	if err != nil {
 		return nil, nil, err
