@@ -173,6 +173,7 @@ func Decode(data []byte) (b *Block, rest []byte) {
 		b.Plaintext = append(b.Plaintext, line...)
 		b.Plaintext = append(b.Plaintext, lf)
 	}
+	b.Plaintext = b.Plaintext[:len(b.Plaintext)-1]
 
 	// We want to find the extent of the armored data (including any newlines at
 	// the end).
@@ -359,7 +360,7 @@ func (d *dashEscaper) Close() (err error) {
 
 // Encode returns a WriteCloser which will clear-sign a message with privateKey
 // and write it to w. If config is nil, sensible defaults are used.
-func Encode(w io.Writer, privateKey *packet.PrivateKey, config *packet.Config, headers map[string]string) (plaintext io.WriteCloser, err error) {
+func Encode(w io.Writer, privateKey *packet.PrivateKey, config *packet.Config) (plaintext io.WriteCloser, err error) {
 	return EncodeMulti(w, []*packet.PrivateKey{privateKey}, config)
 }
 

@@ -61,7 +61,8 @@ func (e *Entity) PrimaryIdentity(date time.Time, config *packet.Config) (*packet
 	var primaryIdentityCandidatesSelfSigs []*packet.Signature
 	for _, identity := range e.Identities {
 		selfSig, err := identity.Verify(date, config) // identity must be valid at date
-		if err == nil {                       // verification is successful
+		if err == nil {
+			// verification is successful
 			primaryIdentityCandidates = append(primaryIdentityCandidates, identity)
 			primaryIdentityCandidatesSelfSigs = append(primaryIdentityCandidatesSelfSigs, selfSig)
 		}
@@ -163,12 +164,12 @@ func (e *Entity) DecryptionKeys(id uint64, date time.Time, config *packet.Config
 	for _, subkey := range e.Subkeys {
 		subkeySelfSig, err := subkey.LatestValidBindingSignature(date, config)
 		if err == nil &&
-			isValidEncryptionKey(subkeySelfSig, subkey.PublicKey.PubKeyAlgo) &&
+			(config.AllowDecryptionWithSigningKeys() || isValidEncryptionKey(subkeySelfSig, subkey.PublicKey.PubKeyAlgo)) &&
 			(id == 0 || subkey.PublicKey.KeyId == id) {
 			keys = append(keys, Key{subkey.Primary, primarySelfSignature, subkey.PublicKey, subkey.PrivateKey, subkeySelfSig})
 		}
 	}
-	if isValidEncryptionKey(primarySelfSignature, e.PrimaryKey.PubKeyAlgo) {
+	if config.AllowDecryptionWithSigningKeys() || isValidEncryptionKey(primarySelfSignature, e.PrimaryKey.PubKeyAlgo) {
 		keys = append(keys, Key{e, primarySelfSignature, e.PrimaryKey, e.PrivateKey, primarySelfSignature})
 	}
 	return

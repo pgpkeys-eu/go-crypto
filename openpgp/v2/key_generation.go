@@ -83,7 +83,9 @@ func newEntity(uid *userIdData, config *packet.Config) (*Entity, error) {
 	}
 	primary := packet.NewSignerPrivateKey(creationTime, primaryPrivRaw)
 	if config.V6() {
-		primary.UpgradeToV6()
+		if err := primary.UpgradeToV6(); err != nil {
+			return nil, err
+		}
 	}
 
 	keyProperties := selectKeyProperties(creationTime, config, primary)
@@ -145,13 +147,15 @@ func (t *Entity) AddDirectKeySignature(selectedKeyProperties *keyProperties, con
 }
 
 func writeKeyProperties(selfSignature *packet.Signature, selectedKeyProperties *keyProperties) error {
+	advertiseAead := selectedKeyProperties.aead != nil
+
 	selfSignature.CreationTime = selectedKeyProperties.creationTime
 	selfSignature.KeyLifetimeSecs = &selectedKeyProperties.keyLifetimeSecs
 	selfSignature.FlagsValid = true
 	selfSignature.FlagSign = true
 	selfSignature.FlagCertify = true
 	selfSignature.SEIPDv1 = true // true by default, see 5.8 vs. 5.14
-	selfSignature.SEIPDv2 = selectedKeyProperties.aead != nil
+	selfSignature.SEIPDv2 = advertiseAead
 
 	// Set the PreferredHash for the SelfSignature from the packet.Config.
 	// If it is not the must-implement algorithm from rfc4880bis, append that.
@@ -195,18 +199,22 @@ func writeKeyProperties(selfSignature *packet.Signature, selectedKeyProperties *
 		selfSignature.PreferredCompression = append(selfSignature.PreferredCompression, uint8(selectedKeyProperties.compression))
 	}
 
-	// And for DefaultMode.
-	modes := []uint8{uint8(selectedKeyProperties.aead.Mode())}
-	if selectedKeyProperties.aead.Mode() != packet.AEADModeOCB {
-		modes = append(modes, uint8(packet.AEADModeOCB))
-	}
+	if advertiseAead {
+		// Get the preferred AEAD mode from the packet.Config.
+		// If it is not the must-implement algorithm from rfc9580, append that.
+		modes := []uint8{uint8(selectedKeyProperties.aead.Mode())}
+		if selectedKeyProperties.aead.Mode() != packet.AEADModeOCB {
+			modes = append(modes, uint8(packet.AEADModeOCB))
+		}
 
-	// For preferred (AES256, GCM), we'll generate (AES256, GCM), (AES256, OCB), (AES128, GCM), (AES128, OCB)
-	for _, cipher := range selfSignature.PreferredSymmetric {
-		for _, mode := range modes {
-			selfSignature.PreferredCipherSuites = append(selfSignature.PreferredCipherSuites, [2]uint8{cipher, mode})
+		// For preferred (AES256, GCM), we'll generate (AES256, GCM), (AES256, OCB), (AES128, GCM), (AES128, OCB)
+		for _, cipher := range selfSignature.PreferredSymmetric {
+			for _, mode := range modes {
+				selfSignature.PreferredCipherSuites = append(selfSignature.PreferredCipherSuites, [2]uint8{cipher, mode})
+			}
 		}
 	}
+
 	return nil
 }
 
@@ -259,7 +267,9 @@ func (e *Entity) AddSigningSubkey(config *packet.Config) error {
 	sub.IsSubkey = true
 	// Every subkey for a v6 primary key MUST be a v6 subkey.
 	if e.PrimaryKey.Version == 6 {
-		sub.UpgradeToV6()
+		if err := sub.UpgradeToV6(); err != nil {
+			return err
+		}
 	}
 
 	subkey := Subkey{
@@ -308,7 +318,9 @@ func (e *Entity) addEncryptionSubkey(config *packet.Config, creationTime time.Ti
 	sub.IsSubkey = true
 	// Every subkey for a v6 primary key MUST be a v6 subkey.
 	if e.PrimaryKey.Version == 6 {
-		sub.UpgradeToV6()
+		if err := sub.UpgradeToV6(); err != nil {
+			return err
+		}
 	}
 
 	subkey := Subkey{

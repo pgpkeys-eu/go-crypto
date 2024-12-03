@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"io"
 	"io/ioutil"
+	"math/bits"
 	"os"
 	"strings"
 	"testing"
@@ -667,8 +668,12 @@ func TestReadV6Messages(t *testing.T) {
 }
 
 func TestSymmetricDecryptionArgon2(t *testing.T) {
+	if bits.UintSize == 32 {
+		// 32-bit platforms cannot allocate 2GiB of RAM
+		// required by the test vector.
+		t.Skip()
+	}
 	// Appendix IETF OpenPGP crypto refresh draft v08 A.8.1
-	passphrase := []byte("password")
 	file, err := os.Open("../test_data/argon2-sym-message.asc")
 	if err != nil {
 		t.Fatal(err)
@@ -677,6 +682,22 @@ func TestSymmetricDecryptionArgon2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testSymmetricDecryptionArgon2Run(t, armoredEncryptedMessage)
+}
+
+func TestSymmetricDecryptionArgon2LessMemory(t *testing.T) {
+	armoredEncryptedMessage := []byte(`-----BEGIN PGP MESSAGE-----
+
+w0gGJgcCFATa3KMW/4/9RsPME+un+MBqAwQQljCpv3dPfmVTFJAcqn+YRcIFrbY4
+iiVOkxM5uAKScyYn/T2su2j2fu+uPl/HpgLSWQIHAgx/1caHYWvwl7tyjJ/tSYwK
+m8OMKQHidSWi7UM88mN17ltnLCV/Wa3bLDIyAgJr9XKubHXeUK6/FqmtPxepd4y/
+SXkqZq0XEafMIbynK2gH6JHjctFX
+-----END PGP MESSAGE-----`)
+	testSymmetricDecryptionArgon2Run(t, armoredEncryptedMessage)
+}
+
+func testSymmetricDecryptionArgon2Run(t *testing.T, armoredEncryptedMessage []byte) {
+	passphrase := []byte("password")
 	// Unarmor string
 	raw, err := armor.Decode(strings.NewReader(string(armoredEncryptedMessage)))
 	if err != nil {
@@ -830,7 +851,7 @@ func TestCorruptedMessageInvalidSigHeader(t *testing.T) {
 	promptFunc := func(keys []Key, symmetric bool) ([]byte, error) {
 		return passphrase, nil
 	}
-	const expectedErr string = "openpgp: invalid data: parsing error"
+	const expectedErr string = "openpgp: decryption with session key failed: parsing error"
 	_, observedErr := ReadMessage(raw.Body, nil, promptFunc, nil)
 	if observedErr.Error() != expectedErr {
 		t.Errorf("Expected error '%s', but got error '%s'", expectedErr, observedErr)
@@ -844,7 +865,7 @@ func TestCorruptedMessageWrongLength(t *testing.T) {
 	promptFunc := func(keys []Key, symmetric bool) ([]byte, error) {
 		return passphrase, nil
 	}
-	const expectedErr string = "openpgp: invalid data: parsing error"
+	const expectedErr string = "openpgp: decryption with session key failed: parsing error"
 
 	file, err := os.Open("../test_data/sym-corrupted-message-long-length.asc")
 	if err != nil {
@@ -1000,5 +1021,43 @@ func testMalformedMessage(t *testing.T, keyring EntityList, message string) {
 	if err == nil {
 		t.Error("Expected malformed message error")
 		return
+	}
+}
+
+func TestReadMessageWithSignOnly(t *testing.T) {
+	config := packet.Config{
+		InsecureAllowDecryptionWithSigningKeys: true,
+	}
+	key, err := ReadArmoredKeyRing(strings.NewReader(rsaSignOnly))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	// Success
+	msgReader, err := armor.Decode(strings.NewReader(armoredMessageRsaSignOnly))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	md, err := ReadMessage(msgReader.Body, key, nil, &config)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	_, err = io.ReadAll(md.UnverifiedBody)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	// Fail
+	msgReader, err = armor.Decode(strings.NewReader(armoredMessageRsaSignOnly))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	md, err = ReadMessage(msgReader.Body, key, nil, nil)
+	if err == nil {
+		t.Fatal("Should not decrypt")
 	}
 }
