@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"io"
-	"io/ioutil"
 	mathrand "math/rand"
 	"testing"
 	"time"
@@ -61,7 +60,9 @@ func TestSignDetachedDSA(t *testing.T) {
 
 func TestSignDetachedP256(t *testing.T) {
 	kring, _ := ReadKeyRing(readerFromHex(p256TestKeyPrivateHex))
-	kring[0].PrivateKey.Decrypt([]byte("passphrase"))
+	if err := kring[0].PrivateKey.Decrypt([]byte("passphrase")); err != nil {
+		t.Error(err)
+	}
 
 	out := bytes.NewBuffer(nil)
 	message := bytes.NewBufferString(signedInput)
@@ -85,6 +86,7 @@ func TestSignDetachedWithNotation(t *testing.T) {
 				IsHumanReadable: true,
 			},
 		},
+		NonDeterministicSignaturesViaNotation: packet.BoolPointer(false),
 	}
 	err := DetachSign(signature, kring[0], message, config)
 	if err != nil {
@@ -136,6 +138,7 @@ func TestSignDetachedWithCriticalNotation(t *testing.T) {
 				IsCritical:      true,
 			},
 		},
+		NonDeterministicSignaturesViaNotation: packet.BoolPointer(false),
 	}
 	err := DetachSign(signature, kring[0], message, config)
 	if err != nil {
@@ -179,7 +182,6 @@ func TestSignDetachedWithCriticalNotation(t *testing.T) {
 }
 
 func TestNewEntity(t *testing.T) {
-
 	// Check bit-length with no config.
 	e, err := NewEntity("Test User", "test", "test@example.com", nil)
 	if err != nil {
@@ -210,8 +212,11 @@ func TestNewEntity(t *testing.T) {
 		t.Errorf("BitLength %v, expected %v", bl, cfg.RSABits)
 	}
 
+	keySerializeConfig := &packet.Config{
+		NonDeterministicSignaturesViaNotation: packet.BoolPointer(false),
+	}
 	w := bytes.NewBuffer(nil)
-	if err := e.SerializePrivate(w, nil); err != nil {
+	if err := e.SerializePrivate(w, keySerializeConfig); err != nil {
 		t.Errorf("failed to serialize entity: %s", err)
 		return
 	}
@@ -219,7 +224,7 @@ func TestNewEntity(t *testing.T) {
 
 	el, err := ReadKeyRing(w)
 	if err != nil {
-		t.Errorf("failed to reparse entity: %s", err)
+		t.Errorf("failed to rephrase entity: %s", err)
 		return
 	}
 
@@ -228,7 +233,7 @@ func TestNewEntity(t *testing.T) {
 	}
 
 	w = bytes.NewBuffer(nil)
-	if err := e.SerializePrivate(w, nil); err != nil {
+	if err := e.SerializePrivate(w, keySerializeConfig); err != nil {
 		t.Errorf("failed to serialize entity second time: %s", err)
 		return
 	}
@@ -246,14 +251,14 @@ func TestNewEntity(t *testing.T) {
 	}
 
 	w = bytes.NewBuffer(nil)
-	if err := e.SerializePrivate(w, nil); err != nil {
+	if err := e.SerializePrivate(w, keySerializeConfig); err != nil {
 		t.Errorf("failed to serialize after encryption round: %s", err)
 		return
 	}
 
 	_, err = ReadKeyRing(w)
 	if err != nil {
-		t.Errorf("failed to reparse entity after encryption round: %s", err)
+		t.Errorf("failed to re-parse entity after encryption round: %s", err)
 		return
 	}
 }
@@ -281,7 +286,7 @@ func TestEncryptWithCompression(t *testing.T) {
 	buf := new(bytes.Buffer)
 	var config = &packet.Config{
 		DefaultCompressionAlgo: packet.CompressionZIP,
-		CompressionConfig:      &packet.CompressionConfig{-1},
+		CompressionConfig:      &packet.CompressionConfig{Level: -1},
 	}
 	w, err := Encrypt(buf, kring[:1], nil, nil /* no hints */, config)
 	if err != nil {
@@ -350,7 +355,7 @@ func TestSymmetricEncryption(t *testing.T) {
 	}
 }
 
-func TestSymmetricEncryptionV5RandomizeSlow(t *testing.T) {
+func TestSymmetricEncryptionSEIPDv2RandomizeSlow(t *testing.T) {
 	modesS2K := map[int]s2k.Mode{
 		0: s2k.IteratedSaltedS2K,
 		1: s2k.Argon2S2K,
@@ -391,6 +396,9 @@ func TestSymmetricEncryptionV5RandomizeSlow(t *testing.T) {
 	packets := packet.NewReader(copiedBuf)
 	// First a SymmetricKeyEncrypted packet
 	p, err := packets.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
 	switch tp := p.(type) {
 	case *packet.SymmetricKeyEncrypted:
 	default:
@@ -398,6 +406,9 @@ func TestSymmetricEncryptionV5RandomizeSlow(t *testing.T) {
 	}
 	// Then an SymmetricallyEncrypted packet version 2
 	p, err = packets.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
 	switch tp := p.(type) {
 	case *packet.SymmetricallyEncrypted:
 		if tp.Version != 2 {
@@ -428,22 +439,27 @@ func TestSymmetricEncryptionV5RandomizeSlow(t *testing.T) {
 var testEncryptionTests = []struct {
 	keyRingHex string
 	isSigned   bool
+	okV6       bool
 }{
 	{
 		testKeys1And2PrivateHex,
 		false,
+		true,
 	},
 	{
 		testKeys1And2PrivateHex,
+		true,
 		true,
 	},
 	{
 		dsaElGamalTestKeysHex,
 		false,
+		false,
 	},
 	{
 		dsaElGamalTestKeysHex,
 		true,
+		false,
 	},
 }
 
@@ -483,7 +499,7 @@ func TestEncryption(t *testing.T) {
 		}
 		compAlgo := compAlgos[mathrand.Intn(len(compAlgos))]
 		level := mathrand.Intn(11) - 1
-		compConf := &packet.CompressionConfig{level}
+		compConf := &packet.CompressionConfig{Level: level}
 		var config = &packet.Config{
 			DefaultCompressionAlgo: compAlgo,
 			CompressionConfig:      compConf,
@@ -498,6 +514,11 @@ func TestEncryption(t *testing.T) {
 		}
 
 		w, err := Encrypt(buf, kring[:1], signed, nil /* no hints */, config)
+		if (err != nil) == (test.okV6 && config.AEAD() != nil) {
+			// ElGamal is not allowed with v6
+			continue
+		}
+
 		if err != nil {
 			t.Errorf("#%d: error in Encrypt: %s", i, err)
 			continue
@@ -533,7 +554,7 @@ func TestEncryption(t *testing.T) {
 			}
 		}
 
-		plaintext, err := ioutil.ReadAll(md.UnverifiedBody)
+		plaintext, err := io.ReadAll(md.UnverifiedBody)
 		if err != nil {
 			t.Errorf("#%d: error reading encrypted contents: %s", i, err)
 			continue
@@ -568,6 +589,9 @@ var testSigningTests = []struct {
 	},
 	{
 		dsaElGamalTestKeysHex,
+	},
+	{
+		ed25519wX25519Key,
 	},
 }
 
@@ -620,7 +644,7 @@ func TestSigning(t *testing.T) {
 			continue
 		}
 
-		testTime, _ := time.Parse("2006-01-02", "2013-07-01")
+		testTime, _ := time.Parse("2006-01-02", "2022-12-01")
 		signKey, _ := kring[0].SigningKey(testTime)
 		expectedKeyId := signKey.PublicKey.KeyId
 		if md.SignedByKeyId != expectedKeyId {
@@ -630,7 +654,7 @@ func TestSigning(t *testing.T) {
 			t.Errorf("#%d: failed to find the signing Entity", i)
 		}
 
-		plaintext, err := ioutil.ReadAll(md.UnverifiedBody)
+		plaintext, err := io.ReadAll(md.UnverifiedBody)
 		if err != nil {
 			t.Errorf("#%d: error reading contents: %v", i, err)
 			continue
@@ -744,9 +768,12 @@ FindKey:
 	}
 
 	decPackets, err := packet.Read(decrypted)
+	if err != nil {
+		return err
+	}
 	_, ok := decPackets.(*packet.Compressed)
 	if !ok {
-		return errors.InvalidArgumentError("No compressed packets found")
+		return errors.StructuralError("No compressed packets found")
 	}
 	return nil
 }

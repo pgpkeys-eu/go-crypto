@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"io"
 	"io/ioutil"
+	"math/bits"
 	"os"
 	"strings"
 	"testing"
@@ -131,7 +132,7 @@ func checkSignedMessage(t *testing.T, signedHex, expected string) {
 		t.Errorf("bad MessageDetails: %#v", md)
 	}
 
-	contents, err := ioutil.ReadAll(md.UnverifiedBody)
+	contents, err := io.ReadAll(md.UnverifiedBody)
 	if err != nil {
 		t.Errorf("error reading UnverifiedBody: %s", err)
 	}
@@ -229,7 +230,7 @@ func TestSignedEncryptedMessage(t *testing.T) {
 			t.Errorf("#%d: bad MessageDetails: %#v", i, md)
 		}
 
-		contents, err := ioutil.ReadAll(md.UnverifiedBody)
+		contents, err := io.ReadAll(md.UnverifiedBody)
 		if err != nil {
 			t.Errorf("#%d: error reading UnverifiedBody: %s", i, err)
 		}
@@ -248,7 +249,7 @@ func TestSignedEncryptedMessage(t *testing.T) {
 				t.Errorf("#%d: error serializing verified signature: %s", i, err)
 			}
 
-			sigData, err := ioutil.ReadAll(&sig)
+			sigData, err := io.ReadAll(&sig)
 			if err != nil {
 				t.Errorf("#%d: error reading verified signature: %s", i, err)
 			}
@@ -267,7 +268,7 @@ func TestSignedEncryptedMessage(t *testing.T) {
 				}
 			}
 
-			sigData, err := ioutil.ReadAll(&sig)
+			sigData, err := io.ReadAll(&sig)
 			if err != nil {
 				t.Errorf("#%d: error reading unverified signature: %s", i, err)
 			}
@@ -289,7 +290,7 @@ func TestUnspecifiedRecipient(t *testing.T) {
 		return
 	}
 
-	contents, err := ioutil.ReadAll(md.UnverifiedBody)
+	contents, err := io.ReadAll(md.UnverifiedBody)
 	if err != nil {
 		t.Errorf("error reading UnverifiedBody: %s", err)
 	}
@@ -324,7 +325,7 @@ func TestSymmetricallyEncrypted(t *testing.T) {
 		return
 	}
 
-	contents, err := ioutil.ReadAll(md.UnverifiedBody)
+	contents, err := io.ReadAll(md.UnverifiedBody)
 	if err != nil {
 		t.Errorf("ReadAll: %s", err)
 	}
@@ -451,7 +452,7 @@ func TestSignatureUnknownNotation(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	_, err = ioutil.ReadAll(md.UnverifiedBody)
+	_, err = io.ReadAll(md.UnverifiedBody)
 	if err != nil {
 		t.Error(err)
 		return
@@ -482,7 +483,7 @@ func TestSignatureKnownNotation(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	_, err = ioutil.ReadAll(md.UnverifiedBody)
+	_, err = io.ReadAll(md.UnverifiedBody)
 	if err != nil {
 		t.Error(err)
 		return
@@ -569,7 +570,7 @@ func TestSignatureV3Message(t *testing.T) {
 		return
 	}
 
-	_, err = ioutil.ReadAll(md.UnverifiedBody)
+	_, err = io.ReadAll(md.UnverifiedBody)
 	if err != nil {
 		t.Error(err)
 		return
@@ -590,20 +591,86 @@ func TestSignatureV3Message(t *testing.T) {
 		t.Errorf("Did not expect a signature V4 back")
 		return
 	}
-	return
 }
 
+func TestReadV6Messages(t *testing.T) {
+	key, err := ReadArmoredKeyRing(strings.NewReader(v6PrivKey))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	msgReader, err := armor.Decode(strings.NewReader(v6PrivKeyMsg))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	md, err := ReadMessage(msgReader.Body, key, nil, nil)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	contents, err := io.ReadAll(md.UnverifiedBody)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if string(contents) != "Hello, world!" {
+		t.Errorf("decrypted message is wrong: %s", contents)
+	}
+
+	msgReader, err = armor.Decode(strings.NewReader(v6PrivKeyInlineSignMsg))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	md, err = ReadMessage(msgReader.Body, key, nil, nil)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	contents, err = io.ReadAll(md.UnverifiedBody)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if md.SignatureError != nil {
+		t.Error("expected no signature error, got:", md.SignatureError)
+	}
+	if string(contents) != "Hello, world!" {
+		t.Errorf("inline message is wrong: %s", contents)
+	}
+}
 func TestSymmetricDecryptionArgon2(t *testing.T) {
+	if bits.UintSize == 32 {
+		// 32-bit platforms cannot allocate 2GiB of RAM
+		// required by the test vector.
+		t.Skip()
+	}
 	// Appendix IETF OpenPGP crypto refresh draft v08 A.8.1
-	passphrase := []byte("password")
 	file, err := os.Open("test_data/argon2-sym-message.asc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	armoredEncryptedMessage, err := ioutil.ReadAll(file)
+	armoredEncryptedMessage, err := io.ReadAll(file)
 	if err != nil {
 		t.Fatal(err)
 	}
+	testSymmetricDecryptionArgon2Run(t, armoredEncryptedMessage)
+}
+
+func TestSymmetricDecryptionArgon2LessMemory(t *testing.T) {
+	armoredEncryptedMessage := []byte(`-----BEGIN PGP MESSAGE-----
+
+w0gGJgcCFATa3KMW/4/9RsPME+un+MBqAwQQljCpv3dPfmVTFJAcqn+YRcIFrbY4
+iiVOkxM5uAKScyYn/T2su2j2fu+uPl/HpgLSWQIHAgx/1caHYWvwl7tyjJ/tSYwK
+m8OMKQHidSWi7UM88mN17ltnLCV/Wa3bLDIyAgJr9XKubHXeUK6/FqmtPxepd4y/
+SXkqZq0XEafMIbynK2gH6JHjctFX
+-----END PGP MESSAGE-----`)
+	testSymmetricDecryptionArgon2Run(t, armoredEncryptedMessage)
+}
+
+func testSymmetricDecryptionArgon2Run(t *testing.T, armoredEncryptedMessage []byte) {
+	passphrase := []byte("password")
 	// Unarmor string
 	raw, err := armor.Decode(strings.NewReader(string(armoredEncryptedMessage)))
 	if err != nil {
@@ -620,29 +687,35 @@ func TestSymmetricDecryptionArgon2(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	contents, err := ioutil.ReadAll(md.UnverifiedBody)
+	contents, err := io.ReadAll(md.UnverifiedBody)
 	if err != nil {
 		t.Errorf("error reading UnverifiedBody: %s", err)
 	}
 
-	if "Hello, world!" != string(contents) {
+	if string(contents) != "Hello, world!" {
 		t.Fatal("Did not decrypt Argon message correctly")
 	}
 }
 
 func TestAsymmestricAeadOcbOpenPGPjsCompressedMessage(t *testing.T) {
+	if packet.V5Disabled {
+		t.Skip()
+	}
 	// Read key from file
 	armored, err := os.Open("test_data/aead-ocb-asym-key.asc")
 	if err != nil {
 		t.Fatal(err)
 	}
 	el, err := ReadArmoredKeyRing(armored)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Read ciphertext from file
 	ciphertext, err := os.Open("test_data/aead-ocb-asym-message.asc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	armoredEncryptedMessage, err := ioutil.ReadAll(ciphertext)
+	armoredEncryptedMessage, err := io.ReadAll(ciphertext)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -659,7 +732,7 @@ func TestAsymmestricAeadOcbOpenPGPjsCompressedMessage(t *testing.T) {
 		return
 	}
 	// Read contents
-	contents, err := ioutil.ReadAll(md.UnverifiedBody)
+	contents, err := io.ReadAll(md.UnverifiedBody)
 	if err != nil && err != io.ErrUnexpectedEOF {
 		t.Errorf("error reading UnverifiedBody: %s", err)
 	}
@@ -674,6 +747,9 @@ func TestAsymmestricAeadOcbOpenPGPjsCompressedMessage(t *testing.T) {
 }
 
 func TestSymmetricAeadEaxOpenPGPJsMessage(t *testing.T) {
+	if packet.V5Disabled {
+		t.Skip()
+	}
 	key := []byte{79, 41, 206, 112, 224, 133, 140, 223, 27, 61, 227, 57, 114,
 		118, 64, 60, 177, 26, 42, 174, 151, 5, 186, 74, 226, 97, 214, 63, 114, 77,
 		215, 121}
@@ -682,12 +758,15 @@ func TestSymmetricAeadEaxOpenPGPJsMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fileBytes, err := ioutil.ReadAll(file)
+	fileBytes, err := io.ReadAll(file)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Decode from base 64
 	raw, err := base64.StdEncoding.DecodeString(string(fileBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := bytes.NewBuffer(raw)
 	// Read packet
 	p, err := packet.Read(r)
@@ -696,18 +775,20 @@ func TestSymmetricAeadEaxOpenPGPJsMessage(t *testing.T) {
 	}
 
 	// Decrypt with key
-	var edp packet.EncryptedDataPacket
-	edp = p.(*packet.AEADEncrypted)
+	var edp = p.(*packet.AEADEncrypted)
 	rc, err := edp.Decrypt(packet.CipherFunction(0), key)
 	if err != nil {
 		panic(err)
 	}
 	// Read literal data packet
 	p, err = packet.Read(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
 	ld := p.(*packet.LiteralData)
 
 	// Read contents
-	contents, err := ioutil.ReadAll(ld.Body)
+	contents, err := io.ReadAll(ld.Body)
 	if err != nil && err != io.ErrUnexpectedEOF {
 		t.Errorf("error reading UnverifiedBody: %s", err)
 	}
@@ -729,7 +810,7 @@ func TestCorruptedMessageInvalidSigHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	armoredEncryptedMessage, err := ioutil.ReadAll(file)
+	armoredEncryptedMessage, err := io.ReadAll(file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -743,7 +824,7 @@ func TestCorruptedMessageInvalidSigHeader(t *testing.T) {
 	promptFunc := func(keys []Key, symmetric bool) ([]byte, error) {
 		return passphrase, nil
 	}
-	const expectedErr string = "openpgp: invalid data: parsing error"
+	const expectedErr string = "openpgp: decryption with session key failed: parsing error"
 	_, observedErr := ReadMessage(raw.Body, nil, promptFunc, nil)
 	if observedErr.Error() != expectedErr {
 		t.Errorf("Expected error '%s', but got error '%s'", expectedErr, observedErr)
@@ -757,13 +838,13 @@ func TestCorruptedMessageWrongLength(t *testing.T) {
 	promptFunc := func(keys []Key, symmetric bool) ([]byte, error) {
 		return passphrase, nil
 	}
-	const expectedErr string = "openpgp: invalid data: parsing error"
+	const expectedErr string = "openpgp: decryption with session key failed: parsing error"
 
 	file, err := os.Open("test_data/sym-corrupted-message-long-length.asc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	armoredEncryptedMessage, err := ioutil.ReadAll(file)
+	armoredEncryptedMessage, err := io.ReadAll(file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -777,7 +858,7 @@ func TestCorruptedMessageWrongLength(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	_, err = ioutil.ReadAll(md.UnverifiedBody)
+	_, err = io.ReadAll(md.UnverifiedBody)
 	if err == nil {
 		t.Fatal("Parsing error expected")
 	}
@@ -828,7 +909,7 @@ func TestMessageWithoutMdc(t *testing.T) {
 			t.Fatal("reading the message should have worked")
 		}
 
-		b, err := ioutil.ReadAll(md.UnverifiedBody)
+		b, err := io.ReadAll(md.UnverifiedBody)
 		if err != nil {
 			t.Fatal("reading the message should have worked")
 		}
@@ -837,4 +918,42 @@ func TestMessageWithoutMdc(t *testing.T) {
 			t.Error("unexpected message content")
 		}
 	})
+}
+
+func TestReadV5Messages(t *testing.T) {
+	if packet.V5Disabled {
+		t.Skip()
+	}
+	key, err := ReadArmoredKeyRing(strings.NewReader(keyv5Test))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	keyVer, err := ReadArmoredKeyRing(strings.NewReader(certv5Test))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	keys := append(key, keyVer...)
+	msgReader, err := armor.Decode(strings.NewReader(msgv5Test))
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	md, err := ReadMessage(msgReader.Body, keys, nil, nil)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	contents, err := io.ReadAll(md.UnverifiedBody)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if string(contents) != "Hello World :)" {
+		t.Errorf("decrypted message is wrong: %s", contents)
+	}
+	if md.SignatureError != nil {
+		t.Error("expected no signature error, got:", md.SignatureError)
+	}
 }

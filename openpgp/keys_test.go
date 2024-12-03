@@ -966,6 +966,9 @@ func TestNewEntityPrivateSerialization(t *testing.T) {
 }
 
 func TestNotationPacket(t *testing.T) {
+	config := &packet.Config{
+		NonDeterministicSignaturesViaNotation: packet.BoolPointer(false),
+	}
 	keys, err := ReadArmoredKeyRing(bytes.NewBufferString(keyWithNotation))
 	if err != nil {
 		t.Fatal(err)
@@ -974,7 +977,7 @@ func TestNotationPacket(t *testing.T) {
 	assertNotationPackets(t, keys)
 
 	serializedEntity := bytes.NewBuffer(nil)
-	err = keys[0].SerializePrivate(serializedEntity, nil)
+	err = keys[0].SerializePrivate(serializedEntity, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1081,7 +1084,9 @@ func TestAddUserId(t *testing.T) {
 	}
 
 	serializedEntity := bytes.NewBuffer(nil)
-	entity.SerializePrivate(serializedEntity, nil)
+	if err := entity.SerializePrivate(serializedEntity, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err = ReadEntity(packet.NewReader(bytes.NewBuffer(serializedEntity.Bytes())))
 	if err != nil {
@@ -1116,7 +1121,9 @@ func TestAddSubkey(t *testing.T) {
 	}
 
 	serializedEntity := bytes.NewBuffer(nil)
-	entity.SerializePrivate(serializedEntity, nil)
+	if err := entity.SerializePrivate(serializedEntity, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err = ReadEntity(packet.NewReader(bytes.NewBuffer(serializedEntity.Bytes())))
 	if err != nil {
@@ -1141,7 +1148,9 @@ func TestAddSubkeySerialized(t *testing.T) {
 	}
 
 	serializedEntity := bytes.NewBuffer(nil)
-	entity.SerializePrivateWithoutSigning(serializedEntity, nil)
+	if err = entity.SerializePrivateWithoutSigning(serializedEntity, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	entity, err = ReadEntity(packet.NewReader(bytes.NewBuffer(serializedEntity.Bytes())))
 	if err != nil {
@@ -1217,7 +1226,9 @@ func TestAddSubkeyWithConfig(t *testing.T) {
 	}
 
 	serializedEntity := bytes.NewBuffer(nil)
-	entity.SerializePrivate(serializedEntity, nil)
+	if err = entity.SerializePrivate(serializedEntity, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err = ReadEntity(packet.NewReader(bytes.NewBuffer(serializedEntity.Bytes())))
 	if err != nil {
@@ -1246,7 +1257,9 @@ func TestAddSubkeyWithConfigSerialized(t *testing.T) {
 	}
 
 	serializedEntity := bytes.NewBuffer(nil)
-	entity.SerializePrivateWithoutSigning(serializedEntity, nil)
+	if err := entity.SerializePrivateWithoutSigning(serializedEntity, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	entity, err = ReadEntity(packet.NewReader(bytes.NewBuffer(serializedEntity.Bytes())))
 	if err != nil {
@@ -1378,7 +1391,9 @@ func TestRevokeSubkey(t *testing.T) {
 	}
 
 	serializedEntity := bytes.NewBuffer(nil)
-	entity.SerializePrivate(serializedEntity, nil)
+	if err := entity.SerializePrivate(serializedEntity, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	// Make sure revocation reason subpackets are not lost during serialization.
 	newEntity, err := ReadEntity(packet.NewReader(bytes.NewBuffer(serializedEntity.Bytes())))
@@ -1485,11 +1500,14 @@ func TestEncryptAndDecryptPrivateKeys(t *testing.T) {
 					S2KMode: mode,
 				},
 			}
+			if mode == s2k.Argon2S2K {
+				config.AEADConfig = &packet.AEADConfig{}
+			}
 			err = entity.EncryptPrivateKeys(passphrase, config)
 			if err != nil {
 				t.Fatal(err)
 			}
-	
+
 			if !entity.PrivateKey.Encrypted {
 				t.Fatal("Expected encrypted private key")
 			}
@@ -1498,12 +1516,12 @@ func TestEncryptAndDecryptPrivateKeys(t *testing.T) {
 					t.Fatal("Expected encrypted private key")
 				}
 			}
-	
+
 			err = entity.DecryptPrivateKeys(passphrase)
 			if err != nil {
 				t.Fatal(err)
 			}
-	
+
 			if entity.PrivateKey.Encrypted {
 				t.Fatal("Expected plaintext private key")
 			}
@@ -1514,8 +1532,6 @@ func TestEncryptAndDecryptPrivateKeys(t *testing.T) {
 			}
 		})
 	}
-	
-
 }
 
 func TestKeyValidateOnDecrypt(t *testing.T) {
@@ -1793,6 +1809,47 @@ func testKeyValidateDsaElGamalOnDecrypt(t *testing.T, randomPassword []byte) {
 	err = elGamalSubkey.Decrypt(randomPassword)
 	if _, ok := err.(errors.KeyInvalidError); !ok {
 		t.Fatal("Failed to detect invalid ElGamal key")
+	}
+}
+
+var foreignKeysv4 = []string{
+	v4Key25519,
+}
+
+func TestReadPrivateForeignV4Key(t *testing.T) {
+	for _, str := range foreignKeysv4 {
+		kring, err := ReadArmoredKeyRing(strings.NewReader(str))
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkV4Key(t, kring[0])
+	}
+}
+
+func checkV4Key(t *testing.T, ent *Entity) {
+	key := ent.PrimaryKey
+	if key.Version != 4 {
+		t.Errorf("wrong key version %d", key.Version)
+	}
+	if len(key.Fingerprint) != 20 {
+		t.Errorf("Wrong fingerprint length: %d", len(key.Fingerprint))
+	}
+	signatures := ent.Revocations
+	for _, id := range ent.Identities {
+		signatures = append(signatures, id.SelfSignature)
+		signatures = append(signatures, id.Signatures...)
+	}
+	for _, sig := range signatures {
+		if sig == nil {
+			continue
+		}
+		if sig.Version != 4 {
+			t.Errorf("wrong signature version %d", sig.Version)
+		}
+		fgptLen := len(sig.IssuerFingerprint)
+		if fgptLen != 20 {
+			t.Errorf("Wrong fingerprint length in signature: %d", fgptLen)
+		}
 	}
 }
 

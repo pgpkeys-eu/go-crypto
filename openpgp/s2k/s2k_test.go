@@ -44,11 +44,11 @@ func TestSalted(t *testing.T) {
 }
 
 var argon2EncodeTest = []struct {
-	in uint32
+	in  uint32
 	out uint8
 }{
-	{64*1024, 16},
-	{64*1024+1, 17},
+	{64 * 1024, 16},
+	{64*1024 + 1, 17},
 	{2147483647, 31},
 	{2147483649, 31},
 	{1, 3},
@@ -57,8 +57,8 @@ var argon2EncodeTest = []struct {
 func TestArgon2EncodeTest(t *testing.T) {
 
 	for i, tests := range argon2EncodeTest {
-		conf  := &Argon2Config {
-			Memory: tests.in,
+		conf := &Argon2Config{
+			Memory:              tests.in,
 			DegreeOfParallelism: 1,
 		}
 		out := conf.EncodedMemory()
@@ -67,7 +67,6 @@ func TestArgon2EncodeTest(t *testing.T) {
 		}
 	}
 }
-
 
 var iteratedTests = []struct {
 	in, out string
@@ -240,8 +239,8 @@ func TestSerializeSaltedIteratedOK(t *testing.T) {
 
 func TestSerializeOKArgon(t *testing.T) {
 	config := &Config{
-		S2KMode: Argon2S2K,
-		Argon2Config: &Argon2Config{NumberOfPasses: 3, DegreeOfParallelism: 4, Memory: 64*1024},
+		S2KMode:      Argon2S2K,
+		Argon2Config: &Argon2Config{NumberOfPasses: 3, DegreeOfParallelism: 4, Memory: 64 * 1024},
 	}
 
 	params := testSerializeConfigOK(t, config)
@@ -276,4 +275,50 @@ func testSerializeConfigOK(t *testing.T, c *Config) *Params {
 	}
 
 	return params
+}
+
+func TestValidateArgon2Params(t *testing.T) {
+	tests := []struct {
+		params  Params
+		wantErr bool
+	}{
+		{
+			params:  Params{parallelism: 4, passes: 3, memoryExp: 6},
+			wantErr: false,
+		},
+		{
+			params:  Params{parallelism: 0, passes: 3, memoryExp: 6},
+			wantErr: true,
+		},
+		{
+			params:  Params{parallelism: 4, passes: 0, memoryExp: 6},
+			wantErr: true,
+		},
+		{
+			params:  Params{parallelism: 4, passes: 3, memoryExp: 4},
+			wantErr: true,
+		},
+		{
+			params:  Params{parallelism: 4, passes: 3, memoryExp: 32},
+			wantErr: true,
+		},
+		{
+			params:  Params{parallelism: 4, passes: 3, memoryExp: 5},
+			wantErr: false,
+		},
+		{
+			params:  Params{parallelism: 4, passes: 3, memoryExp: 31},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		err := validateArgon2Params(&tt.params)
+		if tt.wantErr && err == nil {
+			t.Errorf("validateArgon2Params: expected an error")
+		}
+		if !tt.wantErr && err != nil {
+			t.Error("validateArgon2Params: expected no error")
+		}
+	}
 }

@@ -13,6 +13,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/hex"
+	"fmt"
 	"hash"
 	"math/big"
 	mathrand "math/rand"
@@ -138,67 +139,83 @@ func TestExternalPrivateKeyEncryptDecryptRandomizeSlow(t *testing.T) {
 	}
 }
 
-func TestExternalPrivateKeyEncryptDecryptArgon2(t *testing.T) {
-	config := &Config{
-		S2KConfig: &s2k.Config{S2KMode: s2k.Argon2S2K},
-	}
-	for i, test := range privateKeyTests {
-		packet, err := Read(readerFromHex(test.privateKeyHex))
-		if err != nil {
-			t.Errorf("#%d: failed to parse: %s", i, err)
-			continue
-		}
+func TestExternalPrivateKeyEncryptDecryptS2KModes(t *testing.T) {
+	sk2Modes := []s2k.Mode{s2k.IteratedSaltedS2K, s2k.Argon2S2K}
+	sk2KeyTypes := []S2KType{S2KAEAD, S2KSHA1}
+	for _, s2kMode := range sk2Modes {
+		for _, sk2KeyType := range sk2KeyTypes {
+			if s2kMode == s2k.Argon2S2K && sk2KeyType == S2KSHA1 {
+				continue
+			}
+			t.Run(fmt.Sprintf("s2kMode:%d-s2kType:%d", s2kMode, sk2KeyType), func(t *testing.T) {
+				var configAEAD *AEADConfig
+				if sk2KeyType == S2KAEAD {
+					configAEAD = &AEADConfig{}
+				}
+				config := &Config{
+					S2KConfig:  &s2k.Config{S2KMode: s2kMode},
+					AEADConfig: configAEAD,
+				}
+				for i, test := range privateKeyTests {
+					packet, err := Read(readerFromHex(test.privateKeyHex))
+					if err != nil {
+						t.Errorf("#%d: failed to parse: %s", i, err)
+						continue
+					}
 
-		privKey := packet.(*PrivateKey)
+					privKey := packet.(*PrivateKey)
 
-		if !privKey.Encrypted {
-			t.Errorf("#%d: private key isn't encrypted", i)
-			continue
-		}
+					if !privKey.Encrypted {
+						t.Errorf("#%d: private key isn't encrypted", i)
+						continue
+					}
 
-		// Decrypt with the correct password
-		err = privKey.Decrypt([]byte("testing"))
-		if err != nil {
-			t.Errorf("#%d: failed to decrypt: %s", i, err)
-			continue
-		}
+					// Decrypt with the correct password
+					err = privKey.Decrypt([]byte("testing"))
+					if err != nil {
+						t.Errorf("#%d: failed to decrypt: %s", i, err)
+						continue
+					}
 
-		// Encrypt with another (possibly empty) password
-		randomPassword := make([]byte, mathrand.Intn(30))
-		rand.Read(randomPassword)
-		err = privKey.EncryptWithConfig(randomPassword, config)
-		if err != nil {
-			t.Errorf("#%d: failed to encrypt: %s", i, err)
-			continue
-		}
+					// Encrypt with another (possibly empty) password
+					randomPassword := make([]byte, mathrand.Intn(30))
+					rand.Read(randomPassword)
+					err = privKey.EncryptWithConfig(randomPassword, config)
+					if err != nil {
+						t.Errorf("#%d: failed to encrypt: %s", i, err)
+						continue
+					}
 
-		// Try to decrypt with incorrect password
-		incorrect := make([]byte, 1+mathrand.Intn(30))
-		for rand.Read(incorrect); bytes.Equal(incorrect, randomPassword); {
-			rand.Read(incorrect)
-		}
-		err = privKey.Decrypt(incorrect)
-		if err == nil {
-			t.Errorf("#%d: decrypted with incorrect password\nPassword is:%vDecrypted with:%v", i, randomPassword, incorrect)
-			continue
-		}
+					// Try to decrypt with incorrect password
+					incorrect := make([]byte, 1+mathrand.Intn(30))
+					for rand.Read(incorrect); bytes.Equal(incorrect, randomPassword); {
+						rand.Read(incorrect)
+					}
+					err = privKey.Decrypt(incorrect)
+					if err == nil {
+						t.Errorf("#%d: decrypted with incorrect password\nPassword is:%vDecrypted with:%v", i, randomPassword, incorrect)
+						continue
+					}
 
-		// Try to decrypt with old password
-		err = privKey.Decrypt([]byte("testing"))
-		if err == nil {
-			t.Errorf("#%d: decrypted with old password", i)
-			continue
-		}
+					// Try to decrypt with old password
+					err = privKey.Decrypt([]byte("testing"))
+					if err == nil {
+						t.Errorf("#%d: decrypted with old password", i)
+						continue
+					}
 
-		// Decrypt with correct password
-		err = privKey.Decrypt(randomPassword)
-		if err != nil {
-			t.Errorf("#%d: failed to decrypt: %s", i, err)
-			continue
-		}
+					// Decrypt with correct password
+					err = privKey.Decrypt(randomPassword)
+					if err != nil {
+						t.Errorf("#%d: failed to decrypt: %s", i, err)
+						continue
+					}
 
-		if !privKey.CreationTime.Equal(test.creationTime) || privKey.Encrypted {
-			t.Errorf("#%d: bad result, got: %#v", i, privKey)
+					if !privKey.CreationTime.Equal(test.creationTime) || privKey.Encrypted {
+						t.Errorf("#%d: bad result, got: %#v", i, privKey)
+					}
+				}
+			})
 		}
 	}
 }
@@ -449,9 +466,13 @@ func TestEncryptDecryptEdDSAPrivateKeyRandomizeFast(t *testing.T) {
 	copy(copiedSecret, privKey.PrivateKey.(*eddsa.PrivateKey).D)
 
 	// Encrypt private key with random passphrase
-	privKey.Encrypt(password)
+	if err := privKey.Encrypt(password); err != nil {
+		t.Fatal(err)
+	}
 	// Decrypt and check correctness
-	privKey.Decrypt(password)
+	if err := privKey.Decrypt(password); err != nil {
+		t.Fatal(err)
+	}
 
 	decryptedSecret := privKey.PrivateKey.(*eddsa.PrivateKey).D
 	if !bytes.Equal(decryptedSecret, copiedSecret) {
@@ -544,4 +565,44 @@ func TestElGamalValidation(t *testing.T) {
 		t.Fatalf("failed to detect invalid key (y)")
 	}
 	priv.Y = &y
+}
+
+func TestECDSASignerRandomizedNotation(t *testing.T) {
+	ecdsaPriv, err := ecdsa.GenerateKey(rand.Reader, ecc.NewGenericCurve(elliptic.P256()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	priv := NewSignerPrivateKey(time.Now(), ecdsaPriv)
+	sig := &Signature{
+		Version:    4,
+		PubKeyAlgo: PubKeyAlgoECDSA,
+		Hash:       crypto.SHA256,
+	}
+	msg := make([]byte, mathrand.Intn(maxMessageLength))
+	rand.Read(msg)
+
+	h, err := populateHash(sig.Hash, msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		NonDeterministicSignaturesViaNotation: BoolPointer(true),
+	}
+	if err := sig.Sign(h, priv, &config); err != nil {
+		t.Fatal(err)
+	}
+
+	if h, err = populateHash(sig.Hash, msg); err != nil {
+		t.Fatal(err)
+	}
+	if err := priv.VerifySignature(h, sig); err != nil {
+		t.Fatal(err)
+	}
+	if len(sig.Notations) == 0 {
+		t.Fatalf("failed to find randomized notation")
+	}
+	if sig.Notations[0].Name != SaltNotationName {
+		t.Fatalf("failed to find randomized notation")
+	}
 }
