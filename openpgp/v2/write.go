@@ -611,10 +611,8 @@ func encrypt(
 		timeForEncryptionKey = *params.EncryptionTime
 	}
 	for i, recipient := range append(to, toHidden...) {
-		var ok bool
-		encryptKeys[i], ok = recipient.EncryptionKey(timeForEncryptionKey, config)
-		if !ok {
-			return nil, errors.InvalidArgumentError("cannot encrypt a message to key id " + strconv.FormatUint(to[i].PrimaryKey.KeyId, 16) + " because it has no valid encryption keys")
+		if encryptKeys[i], err = recipient.EncryptionKeyWithError(timeForEncryptionKey, config); err != nil {
+			return nil, err
 		}
 
 		primarySelfSignature, _ := recipient.PrimarySelfSignature(timeForEncryptionKey, config)
@@ -882,7 +880,7 @@ func (s signatureWriter) Close() error {
 	return s.encryptedData.Close()
 }
 
-func adaptHashToSigningKey(config *packet.Config, primary *packet.PublicKey) crypto.Hash {
+func selectHashForSigningKey(config *packet.Config, primary *packet.PublicKey) crypto.Hash {
 	acceptableHashes := acceptableHashesToWrite(primary)
 	hash, ok := algorithm.HashToHashId(config.Hash())
 	if !ok {
@@ -895,17 +893,16 @@ func adaptHashToSigningKey(config *packet.Config, primary *packet.PublicKey) cry
 	}
 	if len(acceptableHashes) > 0 {
 		defaultAcceptedHash, ok := algorithm.HashIdToHash(acceptableHashes[0])
-		if !ok {
-			return config.Hash()
+		if ok {
+			return defaultAcceptedHash
 		}
-		return defaultAcceptedHash
 	}
 	return config.Hash()
 }
 
 func createSignaturePacket(signer *packet.PublicKey, sigType packet.SignatureType, config *packet.Config) *packet.Signature {
 	sigLifetimeSecs := config.SigLifetime()
-	hash := adaptHashToSigningKey(config, signer)
+	hash := selectHashForSigningKey(config, signer)
 	return &packet.Signature{
 		Version:           signer.Version,
 		SigType:           sigType,

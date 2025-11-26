@@ -585,7 +585,6 @@ func TestKeyWithRevokedSubKey(t *testing.T) {
 	if len(subKey.Bindings) == 0 {
 		t.Fatalf("no binding subkey signature")
 	}
-
 }
 
 func TestSubkeyRevocation(t *testing.T) {
@@ -683,7 +682,6 @@ func TestKeyWithSubKeyAndBadSelfSigOrder(t *testing.T) {
 	if lifetime := selfSig.KeyLifetimeSecs; lifetime != nil {
 		t.Errorf("The signature has a key lifetime (%d), but it should be nil", *lifetime)
 	}
-
 }
 
 func TestIdVerification(t *testing.T) {
@@ -1063,6 +1061,7 @@ func TestAddUserId(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 func TestAddSubkey(t *testing.T) {
 	entity, err := NewEntity("Golang Gopher", "Test Key", "no-reply@golang.com", nil)
 	if err != nil {
@@ -2020,5 +2019,93 @@ NciH07RTRuMS/aRhRg4OB8PQROmTnZ+iZS0=
 	_, err := ReadArmoredKeyRing(strings.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAllowAllKeyFlagsWhenMissing(t *testing.T) {
+	// Make a master key.
+	entity, err := NewEntity("Golang Gopher", "Test Key", "no-reply@golang.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config := &packet.Config{}
+
+	primarySelfSignature, err := entity.VerifyPrimaryKey(time.Now(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !entity.PrimaryKey.PubKeyAlgo.CanEncrypt() ||
+		!entity.PrimaryKey.PubKeyAlgo.CanSign() {
+		t.Fatal("PubKeyAlgo must be valid for signature and encryption")
+	}
+
+	/// Flags valid, but not set.
+	primarySelfSignature.FlagsValid = true
+	primarySelfSignature.FlagSign = false
+	primarySelfSignature.FlagCertify = false
+	primarySelfSignature.FlagEncryptCommunications = false
+
+	if isValidSigningKey(primarySelfSignature, entity.PrimaryKey.PubKeyAlgo, config) {
+		t.Error("isValidSigningKey must be false")
+	}
+
+	if isValidEncryptionKey(primarySelfSignature, entity.PrimaryKey.PubKeyAlgo, config) {
+		t.Error("isValidEncryptionKey must be false")
+	}
+
+	if isValidCertificationKey(primarySelfSignature, entity.PrimaryKey.PubKeyAlgo, config) {
+		t.Error("isValidCertificationKey must be false")
+	}
+
+	/// Flags not valid, but InsecureAllowAllKeyFlagsWhenMissing set.
+	primarySelfSignature.FlagsValid = false
+	config = &packet.Config{InsecureAllowAllKeyFlagsWhenMissing: true}
+
+	if !isValidSigningKey(primarySelfSignature, entity.PrimaryKey.PubKeyAlgo, config) {
+		t.Error("isValidSigningKey must be true when InsecureAllowAllKeyFlagsWhenMissing is true")
+	}
+
+	if !isValidEncryptionKey(primarySelfSignature, entity.PrimaryKey.PubKeyAlgo, config) {
+		t.Error("isValidEncryptionKey must be true when InsecureAllowAllKeyFlagsWhenMissing is true")
+	}
+
+	if !isValidCertificationKey(primarySelfSignature, entity.PrimaryKey.PubKeyAlgo, config) {
+		t.Error("isValidCertificationKey must be true when InsecureAllowAllKeyFlagsWhenMissing is true")
+	}
+}
+
+func TestEncryptionKeyError(t *testing.T) {
+	// Make a master key.
+	entity, err := NewEntity("Golang Gopher", "Test Key", "no-reply@golang.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = entity.EncryptionKeyWithError(time.Unix(1405544146, 0), nil)
+	if err == nil {
+		t.Fatal("should fail")
+	}
+	if !strings.Contains(err.Error(), "no valid self signature found") {
+		t.Fatal("wrong error")
+	}
+
+	entity.Subkeys[0].PublicKey.Version = 20
+	_, err = entity.EncryptionKeyWithError(time.Now(), nil)
+	if err == nil {
+		t.Fatal("should fail")
+	}
+	if !strings.Contains(err.Error(), "no valid binding signature found for subkey") {
+		t.Fatal("wrong error")
+	}
+
+	entity.Subkeys = nil
+	_, err = entity.EncryptionKeyWithError(time.Now(), nil)
+	if err == nil {
+		t.Fatal("should fail")
+	}
+	if !strings.Contains(err.Error(), "no encryption-capable key found (no key flags or invalid algorithm)") {
+		t.Fatal("wrong error")
 	}
 }

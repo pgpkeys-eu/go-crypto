@@ -5,6 +5,7 @@
 package clearsign
 
 import (
+	"bufio"
 	"bytes"
 	"crypto"
 	"fmt"
@@ -171,15 +172,61 @@ func TestSigningInterop(t *testing.T) {
 	}
 }
 
-// We use this to make test keys, so that they aren't all the same.
-type quickRand byte
-
-func (qr *quickRand) Read(p []byte) (int, error) {
-	for i := range p {
-		p[i] = byte(*qr)
+func TestHashHeader(t *testing.T) {
+	tests := []struct {
+		name      string
+		hashTypes []crypto.Hash
+		expected  string
+	}{
+		{
+			name: "unique hashes",
+			hashTypes: []crypto.Hash{
+				crypto.SHA256,
+				crypto.SHA512,
+				crypto.SHA3_512,
+			},
+			expected: "Hash: SHA256,SHA512,SHA3-512\n",
+		},
+		{
+			name: "with duplicates",
+			hashTypes: []crypto.Hash{
+				crypto.SHA256,
+				crypto.SHA512,
+				crypto.SHA512,
+				crypto.SHA3_512,
+			},
+			expected: "Hash: SHA256,SHA512,SHA3-512\n",
+		},
+		{
+			name: "with duplicates",
+			hashTypes: []crypto.Hash{
+				crypto.SHA256,
+				crypto.SHA256,
+				crypto.SHA256,
+				crypto.SHA256,
+			},
+			expected: "Hash: SHA256\n",
+		},
 	}
-	*qr++
-	return len(p), nil
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			writer := bufio.NewWriter(&buf)
+			if err := writeHashHeader(writer, tc.hashTypes); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if err := writer.Flush(); err != nil {
+				t.Fatalf("flush failed: %v", err)
+			}
+
+			actual := buf.String()
+			if actual != tc.expected {
+				t.Errorf("output mismatch:\nExpected: %q\nActual:   %q", tc.expected, actual)
+			}
+		})
+	}
 }
 
 func testMultiSign(t *testing.T, v6 bool) {
@@ -187,8 +234,7 @@ func testMultiSign(t *testing.T, v6 bool) {
 		t.Skip("skipping long test in -short mode")
 	}
 
-	zero := quickRand(0)
-	config := packet.Config{Rand: &zero, V6Keys: v6}
+	config := packet.Config{V6Keys: v6}
 
 	for nKeys := 1; nKeys < 4; nKeys++ {
 	nextTest:
