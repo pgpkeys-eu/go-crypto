@@ -280,6 +280,10 @@ func (pk *PublicKey) parse(r io.Reader) (err error) {
 		err = pk.parseEd25519(r)
 	case PubKeyAlgoEd448:
 		err = pk.parseEd448(r)
+	case PubKeyAlgoKyber:
+		// Kyber (ML-KEM) post-quantum encryption - GnuPG 2.5 beta
+		// Parse as opaque data until full ML-KEM library support is added
+		err = pk.parseKyber(r)
 	default:
 		err = errors.UnsupportedError("public key type: " + strconv.Itoa(int(pk.PubKeyAlgo)))
 	}
@@ -533,9 +537,17 @@ func (pk *PublicKey) parseEdDSA(r io.Reader) (err error) {
 		// TODO: see _grcy_ecc_eddsa_ensure_compact in grcypt
 		return errors.UnsupportedError("unsupported EdDSA compression: " + strconv.Itoa(int(flag)))
 	case 0x40:
+		// v6 format with 0x40 prefix - UnmarshalPoint will strip it
 		err = pub.UnmarshalPoint(pk.p.Bytes())
 	default:
-		return errors.UnsupportedError("unsupported EdDSA compression: " + strconv.Itoa(int(flag)))
+		// Already in compact native format (libgcrypt compatibility)
+		// This handles 0xA5 and other encodings used by GnuPG 2.5 v5 keys
+		// For EdDSALegacy (algo 22), the point is in native format without prefix
+		// Set X directly instead of calling UnmarshalPoint to avoid length check
+		pub.X = pk.p.Bytes()
+		if pub.X == nil || len(pub.X) == 0 {
+			return errors.StructuralError("empty EdDSA public key point")
+		}
 	}
 
 	pk.PublicKey = pub
@@ -592,6 +604,50 @@ func (pk *PublicKey) parseEd448(r io.Reader) (err error) {
 	}
 	pk.PublicKey = pub
 	return
+}
+
+// KyberPublicKey represents a composite ML-KEM + ECC public key
+// Used for post-quantum hybrid encryption (GnuPG 2.5 experimental)
+type KyberPublicKey struct {
+	// OID identifies the composite algorithm (e.g., ky1024_cv448 = 1.3.101.111)
+	oid []byte
+	// ECC point (X25519 or X448) for classical ECDH
+	eccPoint []byte
+	// ML-KEM public key material (ML-KEM-768 or ML-KEM-1024)
+	mlkemKey []byte
+}
+
+func (pk *PublicKey) parseKyber(r io.Reader) (err error) {
+	// Kyber (ML-KEM) support is experimental in GnuPG 2.5
+	// Parse the composite structure: OID + ECC point + ML-KEM key
+	// Note: Encryption/decryption operations not yet implemented
+
+	// Read OID identifying the composite algorithm
+	pk.oid = new(encoding.OID)
+	if _, err = pk.oid.ReadFrom(r); err != nil {
+		return
+	}
+
+	// Read ECC point (X25519 or X448)
+	eccMPI := new(encoding.MPI)
+	if _, err = eccMPI.ReadFrom(r); err != nil {
+		return
+	}
+
+	// Read ML-KEM public key material
+	mlkemMPI := new(encoding.MPI)
+	if _, err = mlkemMPI.ReadFrom(r); err != nil {
+		return
+	}
+
+	// Store parsed components
+	kyberKey := &KyberPublicKey{
+		oid:      pk.oid.Bytes(),
+		eccPoint: eccMPI.Bytes(),
+		mlkemKey: mlkemMPI.Bytes(),
+	}
+	pk.PublicKey = kyberKey
+	return nil
 }
 
 // SerializeForHash serializes the PublicKey to w with the special packet
@@ -681,6 +737,15 @@ func (pk *PublicKey) algorithmSpecificByteCount() uint32 {
 		length += ed25519.PublicKeySize
 	case PubKeyAlgoEd448:
 		length += ed448.PublicKeySize
+	case PubKeyAlgoKyber:
+		// Kyber composite key: OID + ECC point + ML-KEM key
+		kyberKey := pk.PublicKey.(*KyberPublicKey)
+		oid := encoding.NewOID(kyberKey.oid)
+		eccMPI := encoding.NewMPI(kyberKey.eccPoint)
+		mlkemMPI := encoding.NewMPI(kyberKey.mlkemKey)
+		length += uint32(oid.EncodedLength())
+		length += uint32(eccMPI.EncodedLength())
+		length += uint32(mlkemMPI.EncodedLength())
 	default:
 		panic("unknown public key algorithm")
 	}
@@ -773,13 +838,29 @@ func (pk *PublicKey) serializeWithoutHeaders(w io.Writer) (err error) {
 		publicKey := pk.PublicKey.(*ed448.PublicKey)
 		_, err = w.Write(publicKey.Point)
 		return
+	case PubKeyAlgoKyber:
+		// Kyber composite key: serialize OID + ECC point + ML-KEM key
+		kyberKey := pk.PublicKey.(*KyberPublicKey)
+		oid := encoding.NewOID(kyberKey.oid)
+		if _, err = w.Write(oid.EncodedBytes()); err != nil {
+			return
+		}
+		eccMPI := encoding.NewMPI(kyberKey.eccPoint)
+		if _, err = w.Write(eccMPI.EncodedBytes()); err != nil {
+			return
+		}
+		mlkemMPI := encoding.NewMPI(kyberKey.mlkemKey)
+		if _, err = w.Write(mlkemMPI.EncodedBytes()); err != nil {
+			return
+		}
+		return
 	}
 	return errors.InvalidArgumentError("bad public-key algorithm")
 }
 
 // CanSign returns true iff this public key can generate signatures
 func (pk *PublicKey) CanSign() bool {
-	return pk.PubKeyAlgo != PubKeyAlgoRSAEncryptOnly && pk.PubKeyAlgo != PubKeyAlgoElGamal && pk.PubKeyAlgo != PubKeyAlgoECDH
+	return pk.PubKeyAlgo != PubKeyAlgoRSAEncryptOnly && pk.PubKeyAlgo != PubKeyAlgoElGamal && pk.PubKeyAlgo != PubKeyAlgoECDH && pk.PubKeyAlgo != PubKeyAlgoKyber
 }
 
 // VerifyHashTag returns nil iff sig appears to be a plausible signature of the data
@@ -1085,6 +1166,10 @@ func (pk *PublicKey) BitLength() (bitLength uint16, err error) {
 		bitLength = ed25519.PublicKeySize * 8
 	case PubKeyAlgoEd448:
 		bitLength = ed448.PublicKeySize * 8
+	case PubKeyAlgoKyber:
+		// Kyber composite key: return ML-KEM key size in bits
+		kyberKey := pk.PublicKey.(*KyberPublicKey)
+		bitLength = uint16(len(kyberKey.mlkemKey) * 8)
 	default:
 		err = errors.InvalidArgumentError("bad public-key algorithm")
 	}

@@ -524,6 +524,7 @@ type PublicKeyAlgorithm uint8
 
 const (
 	PubKeyAlgoRSA     PublicKeyAlgorithm = 1
+	PubKeyAlgoKyber   PublicKeyAlgorithm = 8 // ML-KEM (Kyber) post-quantum - GnuPG 2.5
 	PubKeyAlgoElGamal PublicKeyAlgorithm = 16
 	PubKeyAlgoDSA     PublicKeyAlgorithm = 17
 	// RFC 6637, Section 5.
