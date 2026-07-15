@@ -337,6 +337,7 @@ func (d *dashEscaper) Close() (err error) {
 		sig.Hash = d.hashTypes[i]
 		sig.CreationTime = t
 		sig.IssuerKeyId = &k.KeyId
+		sig.IssuerKeyVersion = uint8(k.Version)
 		sig.IssuerFingerprint = k.Fingerprint
 		sig.Notations = d.config.Notations()
 		sigLifetimeSecs := d.config.SigLifetime()
@@ -415,7 +416,7 @@ func EncodeMultiWithHeader(w io.Writer, privateKeys []*packet.PrivateKey, config
 		if sk.Version == 6 {
 			// generate salt
 			var salt []byte
-			salt, err = packet.SignatureSaltForHash(hashType, config.Random())
+			salt, err = packet.SignatureSaltForHash(selectedHashType, config.Random())
 			if err != nil {
 				return
 			}
@@ -533,7 +534,7 @@ func nameOfHash(h crypto.Hash) string {
 
 func acceptableHashesToWrite(singingKey *packet.PublicKey) []crypto.Hash {
 	switch singingKey.PubKeyAlgo {
-	case packet.PubKeyAlgoEd448:
+	case packet.PubKeyAlgoEd448, packet.PubKeyAlgoMldsa87Ed448:
 		return []crypto.Hash{
 			crypto.SHA512,
 			crypto.SHA3_512,
