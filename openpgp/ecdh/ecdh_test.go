@@ -9,10 +9,12 @@ package ecdh
 import (
 	"bytes"
 	"crypto/rand"
-	"github.com/ProtonMail/go-crypto/openpgp/internal/ecc"
 	"io"
 	"testing"
 
+	"github.com/ProtonMail/go-crypto/openpgp/internal/ecc"
+
+	"github.com/ProtonMail/go-crypto/openpgp/aes/keywrap"
 	"github.com/ProtonMail/go-crypto/openpgp/internal/algorithm"
 )
 
@@ -33,6 +35,7 @@ func TestCurves(t *testing.T) {
 			priv := testGenerate(t, ECDHCurve)
 			testEncryptDecrypt(t, priv, curve.Oid.Bytes(), testFingerprint)
 			testValidation(t, priv)
+			testDecryptInvalidPadding(t, priv, curve.Oid.Bytes(), testFingerprint)
 
 			// Needs fresh key
 			priv = testGenerate(t, ECDHCurve)
@@ -73,6 +76,29 @@ func testEncryptDecrypt(t *testing.T, priv *PrivateKey, oid, fingerprint []byte)
 	}
 }
 
+func testDecryptInvalidPadding(t *testing.T, priv *PrivateKey, oid, fingerprint []byte) {
+	ephemeral, zb, err := priv.PublicKey.curve.Encaps(rand.Reader, priv.PublicKey.Point)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vsG := priv.PublicKey.curve.MarshalBytePoint(ephemeral)
+
+	z, err := buildKey(&priv.PublicKey, zb, oid, fingerprint, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	malformed := []byte{0x09, 'A', 'B', 'C', 'D', 'E', 'F', 0xFF}
+	c, err := keywrap.Wrap(z, malformed)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Decrypt(priv, vsG, c, oid, fingerprint); err == nil {
+		t.Fatal("expected an error for invalid padding, got none")
+	}
+}
+
 func testValidation(t *testing.T, priv *PrivateKey) {
 	if err := Validate(priv); err != nil {
 		t.Fatalf("valid key marked as invalid: %s", err)
@@ -110,5 +136,18 @@ func testMarshalUnmarshal(t *testing.T, priv *PrivateKey) {
 
 	if !bytes.Equal(priv.Point, parsed.Point) || !bytes.Equal(expectedD, parsed.D) {
 		t.Fatal("failed to marshal/unmarshal correctly")
+	}
+}
+
+func TestShortKDFHashRejected(t *testing.T) {
+	curve := ecc.NewCurve25519()
+	kdf := KDF{Hash: algorithm.SHA224, Cipher: algorithm.AES256}
+	priv, err := GenerateKey(rand.Reader, curve, kdf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := make([]byte, 24)
+	if _, _, err := Encrypt(rand.Reader, &priv.PublicKey, msg, []byte{}, make([]byte, 20)); err == nil {
+		t.Error("expected error when the KDF hash is shorter than the KDF cipher key")
 	}
 }
